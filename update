@@ -1,0 +1,171 @@
+import openpyxl
+import requests
+import time
+import pandas as pd
+esi_base_url = "https://esi.evetech.net/latest"
+# issuedBy is col J a col 10
+file_path = "C:/Users/jwmcn/OneDrive/Eve Current/freightOctober.xlsx"
+sheet_name = "Sheet1"
+column_letter = "J"
+character_names = ["CCP Zoetrope"]
+cname = [ "CCP Zoetrope" ]
+character_list = [ "CCP Zoetrope", "Chaunnay Solette" ]
+new_file_path = "C:/Users/jwmcn/OneDrive/Eve Current/storage1.xlsx"
+ESI_BASE_URL = "https://esi.evetech.net/latest"
+CORPORATION_ENDPOINT = "/corporations"
+init_data = {}
+master_df = pd.DataFrame(init_data)
+# init----------------------------------------------------------
+
+def flow():
+    char_name_list = get_column_data(file_path, sheet_name, column_letter)
+    char_id_dict = get_character_ids(char_name_list)
+    char_pair_id_list = list(char_id_dict.values())
+    corp_ids_list = get_corporation_info(char_pair_id_list)
+    unique_corp_ids_list = list(set(corp_ids_list))
+    corp_names_data = get_corporation_names(unique_corp_ids_list)
+    print(corp_names_data[0]) # print corp ids
+    print(corp_names_data[1]) # print corp names
+    alliance_names_data = get_alliance_names_for_corporations(unique_corp_ids_list)
+    print("alliance_names_date")
+    for x in alliance_names_data:
+        print(x, alliance_names_data[x])
+
+
+def get_character_ids(retrieved_list):
+    character_ids = {}
+    ids_url = f"{esi_base_url}/universe/ids/"
+    # data =  [ "CCP Zoetrope" ] #works
+    retrieved_list = list(dict.fromkeys(retrieved_list)) #get unique values
+    retrieved_list = retrieved_list[:10] #remove once batching implemented
+    response = requests.post(ids_url, json=retrieved_list)
+    if response.status_code == 200:
+        results = response.json()
+        names_id_dict = {}
+        if 'characters' in results:
+            for result in results['characters']:
+                character_name = result['name']
+                character_id = result['id']
+                names_id_dict[character_name] = character_id
+                character_ids[character_name] = character_id
+    return character_ids
+
+
+def get_corporation_info(character_id_list):
+    corp_id_list = []
+    for character_id in character_id_list:
+        url = f"https://esi.evetech.net/latest/characters/{character_id}/corporationhistory/"
+        response = requests.get(url)
+        if response.status_code == 200:
+            data = response.json()
+            if data:
+                entry = data[0]  # Assuming the first entry is the current corporation
+                corporation_id = entry['corporation_id']
+                print(corporation_id)
+                corp_id_list.append(corporation_id)
+            else:
+                return None, None
+        else:
+            print(f"Error for character ID {character_id}: {response.status_code} - {response.text}")
+            return None, None
+    return corp_id_list
+
+def get_corporation_names(corporation_ids):
+    corporation_names = {}
+    # this_corp = [98714140] # test
+    ids_url = f"{esi_base_url}/universe/names/"
+    list_of_corp_names = []
+    list_of_corp_ids = []
+    try:
+        response = requests.post(ids_url, json=corporation_ids)
+        if response.status_code == 200:
+            results = response.json()
+        else:
+            corporation_names[corp_id] = "Error: Not found or another error"
+    except requests.exceptions.RequestException as e:
+        corporation_names[corp_id] = f"Error: {str(e)}"
+    ids = [item['id'] for item in results]
+    names = [item['name'] for item in results]
+    return ids, names
+
+
+
+def get_alliance_names_for_corporations(corporation_ids):
+    alliance_names = {}
+    for corp_id in corporation_ids:
+        url = f"{ESI_BASE_URL}{CORPORATION_ENDPOINT}/{corp_id}"
+        try:
+            response = requests.get(url)
+            if response.status_code == 200:
+                corp_info = response.json()
+                # print(corp_info)
+                if "alliance_id" in corp_info:
+                    alliance_id = corp_info["alliance_id"]
+                    if alliance_id is not None:
+                        alliance_name = get_alliance_name(alliance_id)
+                        alliance_names[corp_id] = alliance_id
+                        alliance_names[alliance_id] = alliance_name
+                        # alliance_names[alliance_name] = alliance_name
+                        # print(alliance_names)
+                    else:
+                        alliance_names[corp_id] = "No Alliance"
+                        # print("skipped - no alliance")
+                else:
+                    alliance_names[corp_id] = "Alliance ID not found"
+                    # print("skipped - no alliance")
+            else:
+                alliance_names[corp_id] = "Error: Not found or another error"
+        except requests.exceptions.RequestException as e:
+            alliance_names[corp_id] = f"Error: {str(e)}"
+
+    return alliance_names
+
+def get_alliance_name(alliance_id):
+    url = f"{ESI_BASE_URL}/alliances/{alliance_id}/"
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            alliance_info = response.json()
+            return alliance_info.get("name", "Alliance Name not found")
+        else:
+            return "Alliance not found or another error"
+    except requests.exceptions.RequestException as e:
+        return f"Error: {str(e)}"
+
+
+def append_to_column(column_name, rows_to_write):
+    pass
+
+def wait():
+    wait_keypress = input('press a key')
+    pass
+
+def add_values_to_dataframe(df_name, values, column_name):
+    df_name[column_name] = values
+    return
+
+
+def get_column_data(file_path, sheet_name, column_letter):
+    try:
+        workbook = openpyxl.load_workbook(file_path)
+        sheet = workbook[sheet_name]
+        column_data = []
+        for row in sheet.iter_rows(min_row=2, values_only=True):  # Assuming header is in the first row
+            if row and len(row) >= openpyxl.utils.column_index_from_string(column_letter):
+                cell_value = row[openpyxl.utils.column_index_from_string(column_letter) - 1]
+                column_data.append(cell_value)
+        return column_data
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return []
+
+def print_bar():
+    print("---------------------------------------------")
+    print("---------------------------------------------")
+    return
+
+
+flow()
+
+
+

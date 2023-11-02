@@ -2,11 +2,17 @@ import openpyxl
 import requests
 import time
 import pandas as pd
+from openpyxl import load_workbook
+import math
+from retrying import retry
+# ------------------------
 esi_base_url = "https://esi.evetech.net/latest"
 # issuedBy is col J a col 10
-file_path = "C:/Users/jwmcn/OneDrive/Eve Current/freightOctober.xlsx"
-sheet_name = "Sheet1"
-column_letter = "J"
+# file_path = "C:/Users/jwmcn/OneDrive/Eve Current/freightOctober.xlsx"
+file_path = "C:/Users/jwmcn/OneDrive/Eve Current/charIntelligenceList.xlsx"
+output_txt_file_path = "C:/Users/jwmcn/OneDrive/Eve Current/charIntelligenceOutputLog"
+sheet_name = "master"
+column_letter = "A"
 character_names = ["CCP Zoetrope"]
 cname = [ "CCP Zoetrope" ]
 character_list = [ "CCP Zoetrope", "Chaunnay Solette" ]
@@ -14,143 +20,65 @@ new_file_path = "C:/Users/jwmcn/OneDrive/Eve Current/storage1.xlsx"
 ESI_BASE_URL = "https://esi.evetech.net/latest"
 CORPORATION_ENDPOINT = "/corporations"
 init_data = {}
-master_df = pd.DataFrame(init_data)
-# init----------------------------------------------------------
+sep = "#"
+# -----------------------------------------
 
-def flow():
-    char_name_list = get_column_data(file_path, sheet_name, column_letter)
-    char_id_dict = get_character_ids(char_name_list)
-    char_pair_id_list = list(char_id_dict.values())
-    corp_ids_list = get_corporation_info(char_pair_id_list)
-    unique_corp_ids_list = list(set(corp_ids_list))
-    corp_names_data = get_corporation_names(unique_corp_ids_list)
-    print(corp_names_data[0]) # print corp ids
-    print(corp_names_data[1]) # print corp names
-    alliance_names_data = get_alliance_names_for_corporations(unique_corp_ids_list)
-    print("alliance_names_date")
-    for x in alliance_names_data:
-        print(x, alliance_names_data[x])
+def main():
+    rows_to_work = 100
+    start_row = 1
+    results = flow(rows_to_work, start_row)
+    write_to_file(results)
 
-
-def get_character_ids(retrieved_list):
-    character_ids = {}
-    ids_url = f"{esi_base_url}/universe/ids/"
-    # data =  [ "CCP Zoetrope" ] #works
-    retrieved_list = list(dict.fromkeys(retrieved_list)) #get unique values
-    retrieved_list = retrieved_list[:10] #remove once batching implemented
-    response = requests.post(ids_url, json=retrieved_list)
-    if response.status_code == 200:
-        results = response.json()
-        names_id_dict = {}
-        if 'characters' in results:
-            for result in results['characters']:
-                character_name = result['name']
-                character_id = result['id']
-                names_id_dict[character_name] = character_id
-                character_ids[character_name] = character_id
-    return character_ids
-
-
-def get_corporation_info(character_id_list):
-    corp_id_list = []
-    for character_id in character_id_list:
-        url = f"https://esi.evetech.net/latest/characters/{character_id}/corporationhistory/"
-        response = requests.get(url)
-        if response.status_code == 200:
-            data = response.json()
-            if data:
-                entry = data[0]  # Assuming the first entry is the current corporation
-                corporation_id = entry['corporation_id']
-                print(corporation_id)
-                corp_id_list.append(corporation_id)
-            else:
-                return None, None
-        else:
-            print(f"Error for character ID {character_id}: {response.status_code} - {response.text}")
-            return None, None
-    return corp_id_list
-
-def get_corporation_names(corporation_ids):
-    corporation_names = {}
-    # this_corp = [98714140] # test
-    ids_url = f"{esi_base_url}/universe/names/"
-    list_of_corp_names = []
-    list_of_corp_ids = []
-    try:
-        response = requests.post(ids_url, json=corporation_ids)
-        if response.status_code == 200:
-            results = response.json()
-        else:
-            corporation_names[corp_id] = "Error: Not found or another error"
-    except requests.exceptions.RequestException as e:
-        corporation_names[corp_id] = f"Error: {str(e)}"
-    ids = [item['id'] for item in results]
-    names = [item['name'] for item in results]
-    return ids, names
-
-
-
-def get_alliance_names_for_corporations(corporation_ids):
-    alliance_names = {}
-    for corp_id in corporation_ids:
-        url = f"{ESI_BASE_URL}{CORPORATION_ENDPOINT}/{corp_id}"
-        try:
-            response = requests.get(url)
-            if response.status_code == 200:
-                corp_info = response.json()
-                # print(corp_info)
-                if "alliance_id" in corp_info:
-                    alliance_id = corp_info["alliance_id"]
-                    if alliance_id is not None:
-                        alliance_name = get_alliance_name(alliance_id)
-                        alliance_names[corp_id] = alliance_id
-                        alliance_names[alliance_id] = alliance_name
-                        # alliance_names[alliance_name] = alliance_name
-                        # print(alliance_names)
-                    else:
-                        alliance_names[corp_id] = "No Alliance"
-                        # print("skipped - no alliance")
-                else:
-                    alliance_names[corp_id] = "Alliance ID not found"
-                    # print("skipped - no alliance")
-            else:
-                alliance_names[corp_id] = "Error: Not found or another error"
-        except requests.exceptions.RequestException as e:
-            alliance_names[corp_id] = f"Error: {str(e)}"
-
-    return alliance_names
-
-def get_alliance_name(alliance_id):
-    url = f"{ESI_BASE_URL}/alliances/{alliance_id}/"
-    try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            alliance_info = response.json()
-            return alliance_info.get("name", "Alliance Name not found")
-        else:
-            return "Alliance not found or another error"
-    except requests.exceptions.RequestException as e:
-        return f"Error: {str(e)}"
-
-
-def append_to_column(column_name, rows_to_write):
-    pass
 
 def wait():
-    wait_keypress = input('press a key')
-    pass
-
-def add_values_to_dataframe(df_name, values, column_name):
-    df_name[column_name] = values
+    time.sleep(1)
     return
 
+def flow(rows_to_work, start_row):
+    current_row = 0
+    batch_size = 1000
+    character_name_list = get_column_data(file_path, sheet_name, column_letter, start_row, batch_size)
+    batch_counter = 0
+    start_time = time.time()
+    for row in character_name_list:
+        try:
+            batch_counter = batch_counter + 1
+            print(batch_counter, "rows")
+            print(row)
+            character_name = [row]
+            character_id = get_character_id(character_name)
+            character_id = character_id[1]
+            corp_id = get_corp_id(character_id)
+            corp_id = [corp_id]
+            corp_name = get_corp_name(corp_id)
+            corp_id=corp_id[0]
+            alliance_id = get_alliance_id_by_corp_id(corp_id)
+            alliance_name = get_alliance_name(alliance_id)
+            print_line()
+            character_string = character_name[0], sep, character_id, sep, corp_name[0], sep,  alliance_name, sep, alliance_id
+            character_string = " ".join(str(x) for x in character_string)
+            write_to_file(output_txt_file_path, character_string)
+            print('wrote to file for character', character_name)
+            print(character_string)
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            print(elapsed_time)
+            print((int(elapsed_time)/batch_counter), "is secs per row")
 
-def get_column_data(file_path, sheet_name, column_letter):
+        except Exception as e:
+            character_string = "error".join(character_name)
+            print("error on", character_name)
+
+
+@retry(wait_fixed=3, stop_max_attempt_number=5)
+def get_column_data(file_path, sheet_name, column_letter, start_row=1, batch_size=1):
+    sr = start_row
+    last_row = start_row + batch_size
     try:
         workbook = openpyxl.load_workbook(file_path)
         sheet = workbook[sheet_name]
         column_data = []
-        for row in sheet.iter_rows(min_row=2, values_only=True):  # Assuming header is in the first row
+        for row in sheet.iter_rows(min_row=start_row, max_row=start_row + 1000, values_only=True):  # Assuming header is in the first row
             if row and len(row) >= openpyxl.utils.column_index_from_string(column_letter):
                 cell_value = row[openpyxl.utils.column_index_from_string(column_letter) - 1]
                 column_data.append(cell_value)
@@ -159,13 +87,98 @@ def get_column_data(file_path, sheet_name, column_letter):
         print(f"An error occurred: {e}")
         return []
 
-def print_bar():
-    print("---------------------------------------------")
-    print("---------------------------------------------")
+@retry(wait_fixed=3, stop_max_attempt_number=5)
+def get_character_id(character_name):
+    print("getting name")
+    print('getting id for ', character_name)
+    ids_url = f"{esi_base_url}/universe/ids/"
+    response = requests.post(ids_url, json=character_name)
+    if response.status_code == 200:
+        results = response.json()
+        print(results)
+        if 'characters' in results:
+            for result in results['characters']:
+                character_name = result['name']
+                character_id = result['id']
+    else:
+        print(response.status_code)
+    return character_name, character_id
+
+@retry(wait_fixed=3, stop_max_attempt_number=5)
+def get_corp_id(character_id):
+    url = f"https://esi.evetech.net/latest/characters/{character_id}/corporationhistory/"
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json()
+        if data:
+            entry = data[0]  # Assuming the first entry is the current corporation
+            corporation_id = entry['corporation_id']
+    else:
+        print(response.status_code)
+    return corporation_id
+
+@retry(wait_fixed=3, stop_max_attempt_number=5)
+def get_corp_name(corp_id):
+    ids_url = f"{esi_base_url}/universe/names/"
+    try:
+        response = requests.post(ids_url, json=corp_id)
+        if response.status_code == 200:
+            results = response.json()
+        else:
+            names = "Error: Not found or another error"
+    except requests.exceptions.RequestException as e:
+       names = f"Error: {str(e)}"
+    # ids = [item['id'] for item in results]
+
+
+    names = [item['name'] for item in results]
+    print(names)
+    return names
+
+@retry(wait_fixed=3, stop_max_attempt_number=5)
+def get_alliance_id_by_corp_id(corp_id):
+    base_url = "https://esi.evetech.net/latest"
+    # Make a request to get corporation's alliance history
+    alliance_history_url = f"{base_url}/corporations/{corp_id}/alliancehistory/"
+    # alliance_history_url = 'https://esi.evetech.net/latest/corporations/98728660/alliancehistory/?datasource=tranquility'
+    response = requests.get(alliance_history_url)
+    if response.status_code == 200:
+        stuff = response.json()
+        if stuff and isinstance(stuff, list):
+            if 'alliance_id' in stuff[0]:
+                alliance_id = stuff[0]['alliance_id']
+                return alliance_id
+            else:
+                alliance_id = 'not found or null'
+    else:
+        print('error')
+
+@retry(wait_fixed=3, stop_max_attempt_number=5)
+def get_alliance_name(alliance_id):
+    url = f"{ESI_BASE_URL}/alliances/{alliance_id}/"
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            alliance_info = response.json()
+            return alliance_info.get("name")
+        else:
+            return "Alliance not found or another error"
+    except requests.exceptions.RequestException as e:
+        return f"Error: {str(e)}"
+
+def print_line():
+    print("XXXXXXXXXXXXXXXX")
+    print("XXXXXXXXXXXXXXXX")
+
+def should_retry():
+    print(retrying)
+    return True
+
+def write_to_file(output_txt_file_path, string):
+    with open(output_txt_file_path, 'a+') as file:
+        file.write(string + "\n")
     return
 
 
-flow()
 
-
-
+flow(10, 10)
